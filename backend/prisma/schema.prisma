@@ -1,0 +1,149 @@
+// Prisma 모델에서 백엔드가 import할 클라이언트를 생성한다. Node.js가 ESM으로 읽도록 확장자를 명시한다.
+generator client {
+  provider            = "prisma-client"
+  output              = "../src/generated/prisma"
+  moduleFormat        = "esm"
+  importFileExtension = "ts"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum TagKind {
+  mood
+  situation
+
+  @@map("tag_kind")
+}
+
+enum PlaceSetting {
+  indoor
+  outdoor
+  mixed
+
+  @@map("place_setting")
+}
+
+enum PlaceStatus {
+  draft
+  published
+  hidden
+
+  @@map("place_status")
+}
+
+model Region {
+  id        Int     @id @default(autoincrement())
+  slug      String  @unique
+  name      String
+  // @map과 @@map을 사용해 코드의 camelCase 이름을 SQL의 snake_case 이름에 연결한다.
+  sortOrder Int     @map("sort_order")
+  places    Place[]
+
+  @@map("regions")
+}
+
+model Category {
+  id        Int     @id @default(autoincrement())
+  slug      String  @unique
+  name      String
+  sortOrder Int     @map("sort_order")
+  places    Place[]
+
+  @@map("categories")
+}
+
+model Tag {
+  id        Int        @id @default(autoincrement())
+  kind      TagKind
+  slug      String
+  name      String
+  sortOrder Int        @map("sort_order")
+  places    PlaceTag[]
+
+  // 분위기와 상황을 별도 필터로 다루므로 slug의 중복 여부는 같은 종류 안에서 비교한다.
+  @@unique([kind, slug])
+  @@map("tags")
+}
+
+model Place {
+  id          Int          @id @default(autoincrement())
+  regionId    Int          @map("region_id")
+  categoryId  Int          @map("category_id")
+  name        String
+  summary     String?
+  overview    String?
+  address     String
+  // 소수점 아래 6자리를 고정 정밀도로 저장한다. 유효 좌표 범위는 초기 SQL의 CHECK가 검사한다.
+  latitude    Decimal      @db.Decimal(9, 6)
+  longitude   Decimal      @db.Decimal(9, 6)
+  setting     PlaceSetting?
+  // 수집한 장소를 검토하기 전에는 공개 목록에 노출하지 않도록 초안을 기본 상태로 둔다.
+  status      PlaceStatus  @default(draft)
+  kakaoMapUrl String?      @map("kakao_map_url")
+  naverMapUrl String?      @map("naver_map_url")
+  verifiedAt  DateTime?    @map("verified_at") @db.Timestamptz(6)
+  createdAt   DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt   DateTime     @updatedAt @map("updated_at") @db.Timestamptz(6)
+  // 사용 중인 지역이나 카테고리를 삭제하면 연결된 장소의 분류가 사라지므로 삭제를 막는다.
+  region      Region       @relation(fields: [regionId], references: [id], onDelete: Restrict)
+  category    Category     @relation(fields: [categoryId], references: [id], onDelete: Restrict)
+  sources     PlaceSource[]
+  tags        PlaceTag[]
+  images      PlaceImage[]
+
+  // 공개 상태를 먼저 좁히고 최신순으로 읽는다. 등록 시각이 같으면 ID로 순서를 정한다.
+  @@index([status, createdAt(sort: Desc), id(sort: Desc)])
+  @@index([regionId])
+  @@index([categoryId])
+  @@map("places")
+}
+
+model PlaceSource {
+  placeId          Int       @map("place_id")
+  provider         String
+  externalId       String    @map("external_id")
+  contentTypeId    String?   @map("content_type_id")
+  sourceUrl        String?   @map("source_url")
+  sourceModifiedAt DateTime? @map("source_modified_at") @db.Timestamptz(6)
+  lastSyncedAt     DateTime  @map("last_synced_at") @db.Timestamptz(6)
+  place            Place     @relation(fields: [placeId], references: [id], onDelete: Cascade)
+
+  // 제공처마다 ID 범위가 다를 수 있어 두 값을 함께 쓰면 재수집 때 같은 후보를 찾을 수 있다.
+  @@id([provider, externalId])
+  // 한 장소에는 제공처별로 출처를 하나씩만 연결한다.
+  @@unique([placeId, provider])
+  @@map("place_sources")
+}
+
+// 연결 테이블로 다대다 관계를 표현한다. 장소나 태그가 실제 삭제되면 그 연결 행도 제거한다.
+model PlaceTag {
+  placeId Int   @map("place_id")
+  tagId   Int   @map("tag_id")
+  place   Place @relation(fields: [placeId], references: [id], onDelete: Cascade)
+  tag     Tag   @relation(fields: [tagId], references: [id], onDelete: Cascade)
+
+  @@id([placeId, tagId])
+  // 복합 PK는 장소의 태그 조회에 쓰고, 반대 순서의 인덱스는 태그로 장소를 찾을 때 쓴다.
+  @@index([tagId, placeId])
+  @@map("place_tags")
+}
+
+model PlaceImage {
+  id              Int     @id @default(autoincrement())
+  placeId         Int     @map("place_id")
+  imageUrl        String  @map("image_url")
+  altText         String  @map("alt_text")
+  sortOrder       Int     @map("sort_order")
+  sourceUrl       String? @map("source_url")
+  provider        String?
+  licenseCode     String? @map("license_code")
+  usageBasis      String  @map("usage_basis")
+  attributionText String? @map("attribution_text")
+  place           Place   @relation(fields: [placeId], references: [id], onDelete: Cascade)
+
+  // 장소 안에서 사진 순서는 유일하다. 순서가 가장 작은 사진을 대표 사진으로 선택할 수 있다.
+  @@unique([placeId, sortOrder])
+  @@map("place_images")
+}
