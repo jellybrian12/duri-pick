@@ -96,6 +96,19 @@ function placeWhere(q, filters) {
 }
 
 const orderedImages = {
+  // 출처와 이용 근거를 확인한 사진만 선택한다. 제한 유형은 대표 사진보다 먼저 걸러낸다.
+  where: {
+    attributionText: { not: '' },
+    usageBasis: { not: '' },
+    AND: [
+      { OR: [{ licenseCode: null }, { licenseCode: { notIn: ['Type2', 'Type3', 'Type4'] } }] },
+      { OR: [
+        { provider: null },
+        { provider: { not: 'tourapi' } },
+        { licenseCode: 'Type1', sourceUrl: { not: '' } },
+      ] },
+    ],
+  },
   orderBy: { sortOrder: 'asc' },
   select: { imageUrl: true, altText: true, attributionText: true },
 }

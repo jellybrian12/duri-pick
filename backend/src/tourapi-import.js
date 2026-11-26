@@ -1,6 +1,8 @@
+import { readFile } from 'node:fs/promises'
 import { parseArgs } from 'node:util'
 import { createTourApiClient } from './tourapi-client.js'
 import { assignTourApiRegion } from './tourapi-region.js'
+import { fetchTourApiPhotos, parsePhotoAttributions, photoIdsForReview, syncTourApiPhotos } from './tourapi-images.js'
 
 const provider = 'tourapi'
 const districts = new Set(['110', '140', '170', '200', '440'])
@@ -132,14 +134,12 @@ async function saveCandidate(db, row, context) {
   }
 }
 
-async function recordCandidate(prisma, row, context) {
-  if (!context.apply) return saveCandidate(prisma, row, context)
-
+async function runSerializable(prisma, operation) {
   // 직렬화 가능 트랜잭션으로 여러 수집 작업의 중복 검사와 저장이 엇갈리지 않게 한다.
   for (let attempt = 1; ; attempt++) {
     try {
       return await prisma.$transaction(
-        (db) => saveCandidate(db, row, context), { isolationLevel: 'Serializable' },
+        operation, { isolationLevel: 'Serializable' },
       )
     } catch (error) {
       if (attempt === 3 || !['P2034', 'P2002'].includes(error.code)) throw error
@@ -163,7 +163,9 @@ function detailWithList(list, detail) {
   return merged
 }
 
-export async function importTourApiDistrict({ prisma, request, district, apply = false }) {
+export async function importTourApiDistrict({
+  prisma, request, district, apply = false, photoAttributions = new Map(),
+}) {
   if (!districts.has(district)) throw new Error('A supported TourAPI district code is required.')
 
   const [regions, categories] = await Promise.all([
@@ -172,6 +174,7 @@ export async function importTourApiDistrict({ prisma, request, district, apply =
   ])
   const report = { mode: apply ? 'apply' : 'dry-run', district, results: [], failures: [] }
   const seen = new Set()
+  let photoRequestsStopped = false
   const context = {
     district, apply, previewedPlaces: [],
     regions: new Map(regions.map(({ slug, id }) => [slug, id])),
@@ -215,11 +218,48 @@ export async function importTourApiDistrict({ prisma, request, district, apply =
           continue
         }
 
+        let candidate
         try {
-          const result = await recordCandidate(prisma, detailWithList(row, item), { ...context, externalId })
-          report.results.push({ externalId, ...result })
+          const details = detailWithList(row, item)
+          const candidateContext = { ...context, externalId }
+          candidate = apply
+            ? await runSerializable(prisma, db => saveCandidate(db, details, candidateContext))
+            : await saveCandidate(prisma, details, candidateContext)
         } catch {
           report.failures.push({ operation: 'save_candidate', externalId, error: 'database_error' })
+          continue
+        }
+
+        const entry = { externalId, ...candidate }
+        report.results.push(entry)
+        if (candidate.status !== 'published' && candidate.status !== 'updated') continue
+
+        // 사진 오류로 이미 확인한 장소의 기본 정보 저장을 되돌리지 않는다.
+        try {
+          const photos = photoRequestsStopped
+            ? { error: 'photo_requests_stopped' }
+            : await fetchTourApiPhotos(request, externalId)
+          if (photos.error) {
+            if (!photoRequestsStopped) {
+              report.failures.push({ operation: 'detailImage2', externalId, error: photos.error, http: photos.http })
+              photoRequestsStopped = shouldStop(photos)
+            }
+            entry.photos = {
+              error: photos.error,
+              existingPhotoIdsForReview: await photoIdsForReview(prisma, candidate.placeId),
+            }
+            continue
+          }
+
+          const photoContext = {
+            apply, placeId: candidate.placeId, contentId: externalId,
+            rows: photos.rows, attributions: photoAttributions,
+          }
+          entry.photos = apply
+            ? await runSerializable(prisma, db => syncTourApiPhotos(db, photoContext))
+            : await syncTourApiPhotos(prisma, photoContext)
+        } catch {
+          report.failures.push({ operation: 'sync_photos', externalId, error: 'photo_sync_error' })
         }
       }
 
@@ -231,17 +271,26 @@ export async function importTourApiDistrict({ prisma, request, district, apply =
 
 async function main() {
   const { values } = parseArgs({
-    options: { district: { type: 'string' }, apply: { type: 'boolean', default: false } },
+    options: {
+      district: { type: 'string' },
+      apply: { type: 'boolean', default: false },
+      'image-attributions': { type: 'string' },
+    },
   })
   if (!districts.has(values.district)) {
     throw new Error('Use --district with one of: 110, 140, 170, 200, 440.')
   }
 
+  const photoAttributions = values['image-attributions']
+    ? parsePhotoAttributions(JSON.parse(await readFile(values['image-attributions'], 'utf8')))
+    : new Map()
   const request = createTourApiClient(process.env.TOURAPI_SERVICE_KEY)
   const { createPrismaClient } = await import('./db.js')
   const prisma = createPrismaClient()
   try {
-    const report = await importTourApiDistrict({ prisma, request, district: values.district, apply: values.apply })
+    const report = await importTourApiDistrict({
+      prisma, request, district: values.district, apply: values.apply, photoAttributions,
+    })
     process.stdout.write(JSON.stringify(report, null, 2) + '\n')
     if (report.failures.length > 0) process.exitCode = 1
   } finally {
@@ -252,7 +301,7 @@ async function main() {
 if (import.meta.main) {
   main().catch(() => {
     // 외부 API나 DB 오류에 인증 정보가 포함될 수 있으므로 명령 실행 실패는 일반 메시지로 안내한다.
-    console.error('TourAPI import failed. Check the DB connection, TOURAPI_SERVICE_KEY and --district (110, 140, 170, 200, 440).')
+    console.error('TourAPI import failed. Check the DB connection, TOURAPI_SERVICE_KEY, --district (110, 140, 170, 200, 440) and optional --image-attributions file.')
     process.exitCode = 1
   })
 }
