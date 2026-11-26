@@ -8,7 +8,8 @@
     "start": "node --env-file-if-exists=.env src/server.js",
     "db:generate": "prisma generate",
     "db:migrate": "prisma migrate deploy",
-    "db:seed": "prisma db seed"
+    "db:seed": "prisma db seed",
+    "tourapi:import": "node --env-file-if-exists=.env src/tourapi-import.js"
   },
   "dependencies": {
     "@prisma/adapter-pg": "^7.10.1",

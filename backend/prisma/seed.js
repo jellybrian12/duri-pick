@@ -6,8 +6,7 @@ const regions = [
   ['yongsan', '용산'],
   ['seongsu-seoul-forest', '성수~서울숲'],
   ['yeonnam', '연남'],
-  ['ikseon-dong', '익선동'],
-  ['haebangchon', '해방촌'],
+  ['jongno-euljiro', '종로~을지로'],
   ['seochon', '서촌'],
   ['bukchon', '북촌'],
 ]
