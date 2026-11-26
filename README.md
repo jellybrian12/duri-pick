@@ -30,7 +30,7 @@ npm run db:migrate --workspace backend
 npm run db:seed --workspace backend
 ```
 
-시드는 출시 지역 7곳, 카테고리, 분위기·상황 태그를 추가합니다. 다시 실행해도 기존 행과 ID는 유지됩니다. `docker compose stop db`로 DB를 중지할 수 있으며, 다음에 시작하면 같은 볼륨을 사용합니다.
+시드는 출시 지역 6곳, 카테고리, 분위기·상황 태그를 추가합니다. 다시 실행해도 기존 행과 ID는 유지됩니다. `docker compose stop db`로 DB를 중지할 수 있으며, 다음에 시작하면 같은 볼륨을 사용합니다.
 
 ### 백엔드 코드 읽는 순서
 

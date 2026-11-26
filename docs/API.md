@@ -26,11 +26,13 @@
 | 목록 쿼리 | 값 |
 | --- | --- |
 | `q` | 장소명 또는 지역명 부분 일치 |
-| `region`, `category` | 등록된 지역과 카테고리 slug |
+| `region`, `category` | `GET /filters`에서 반환하는 지역과 카테고리 slug |
 | `mood`, `situation` | 태그 종류별로 등록된 slug |
 | `setting` | `indoor,outdoor,mixed`. 실내 또는 실외 필터는 `mixed`도 포함한다. 유효한 `setting` 필터가 있으면 미분류 장소는 결과에서 제외한다. |
 | `page`, `pageSize` | 공통 페이지 규칙 |
 | `ids` | 양의 정수 최대 20개. 입력 순서의 첫 등장대로 반환하고 미등록·비공개 장소는 생략한다. 다른 쿼리와 함께 사용하면 `400`이다. |
+
+첫 출시 지역 slug는 `yongsan`(용산, 해방촌 포함), `seongsu-seoul-forest`, `yeonnam`, `jongno-euljiro`(종로~을지로), `seochon`, `bukchon`이다.
 
 같은 필터 키에 있는 값은 OR, 서로 다른 필터 키는 AND로 적용한다. 일반 목록은 등록일 내림차순으로 반환하며 등록일이 같으면 ID 내림차순으로 비교한다. 목록은 `pageSize + 1`건 조회 후 추가 행의 존재로 `hasNextPage`를 계산한다.
 
