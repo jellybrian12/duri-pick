@@ -154,7 +154,13 @@ function shouldStop(response) {
 
 function detailWithList(list, detail) {
   // 상세 응답의 값을 우선 사용하고 누락된 필드는 목록 응답으로 보완한다.
-  return { ...list, ...Object.fromEntries(Object.entries(detail).filter(([, value]) => text(value))) }
+  const merged = { ...list, ...Object.fromEntries(Object.entries(detail).filter(([, value]) => text(value))) }
+  const detailAddress = text(detail.addr1)
+  if (detailAddress && detailAddress.normalize('NFC') !== text(list.addr1).normalize('NFC')) {
+    // 기본 주소가 달라졌으면 목록의 법정동이 새 주소에 속하는지 확인할 수 없다.
+    merged.addr2 = text(detail.addr2)
+  }
+  return merged
 }
 
 export async function importTourApiDistrict({ prisma, request, district, apply = false }) {
