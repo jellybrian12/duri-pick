@@ -1,6 +1,6 @@
 import express from 'express'
 import { getFilters } from './filters.js'
-import { getPlaces, InvalidPlacesQuery, parsePlacesQuery } from './places.js'
+import { getPlaceDetail, getPlaces, InvalidPlacesQuery, parsePlaceId, parsePlacesQuery } from './places.js'
 
 const app = express()
 const host = '127.0.0.1'
@@ -50,6 +50,45 @@ app.get('/api/v1/places', async (request, response) => {
       },
     })
   }
+})
+
+function invalidPlaceId(response) {
+  response.status(400).json({
+    error: { code: 'INVALID_PLACE_ID', message: '유효한 장소 ID를 입력해 주세요.' },
+  })
+}
+
+app.get('/api/v1/places/:id', async (request, response) => {
+  const id = parsePlaceId(request.params.id)
+  if (id === null) {
+    invalidPlaceId(response)
+    return
+  }
+
+  try {
+    const detail = await getPlaceDetail(await getPrisma(), id)
+    if (!detail) {
+      response.status(404).json({
+        error: { code: 'PLACE_NOT_FOUND', message: '장소를 이용할 수 없습니다.' },
+      })
+      return
+    }
+
+    response.json(detail)
+  } catch {
+    response.status(500).json({
+      error: { code: 'INTERNAL_ERROR', message: '장소 상세 정보를 불러오지 못했습니다.' },
+    })
+  }
+})
+
+app.use((error, request, response, next) => {
+  // 잘못 인코딩된 ID는 Express가 라우트에 진입하기 전에 거절하므로 같은 JSON 오류로 응답한다.
+  if (error instanceof URIError && /^\/api\/v1\/places\/[^/]+\/?$/i.test(request.path)) {
+    invalidPlaceId(response)
+    return
+  }
+  next(error)
 })
 
 const server = app.listen(port, host, () => {

@@ -95,6 +95,29 @@ function placeWhere(q, filters) {
   return where
 }
 
+const orderedImages = {
+  orderBy: { sortOrder: 'asc' },
+  select: { imageUrl: true, altText: true, attributionText: true },
+}
+
+// 목록과 상세가 같은 카드 필드를 조회하고, 사진은 필요한 개수만 읽는다.
+const placeCardSelect = {
+  id: true,
+  name: true,
+  region: { select: { slug: true, name: true } },
+  category: { select: { slug: true, name: true } },
+  setting: true,
+  tags: {
+    orderBy: [{ tag: { sortOrder: 'asc' } }, { tagId: 'asc' }],
+    select: { tag: { select: { kind: true, slug: true, name: true } } },
+  },
+  images: { ...orderedImages, take: 1 },
+}
+
+function placeImage({ imageUrl, altText, attributionText }) {
+  return { url: imageUrl, alt: altText, attributionText }
+}
+
 function placeCard({ id, name, region, category, setting, tags, images }) {
   const moods = []
   const situations = []
@@ -111,9 +134,7 @@ function placeCard({ id, name, region, category, setting, tags, images }) {
     setting,
     moods,
     situations,
-    coverImage: image
-      ? { url: image.imageUrl, alt: image.altText, attributionText: image.attributionText }
-      : null,
+    coverImage: image ? placeImage(image) : null,
   }
 }
 
@@ -125,22 +146,7 @@ export async function getPlaces(prisma, { q, filters, page, pageSize }) {
     skip: (page - 1) * pageSize,
     // 한 건을 더 읽어 전체 건수를 별도로 세지 않고 다음 페이지 여부를 판단한다.
     take: pageSize + 1,
-    select: {
-      id: true,
-      name: true,
-      region: { select: { slug: true, name: true } },
-      category: { select: { slug: true, name: true } },
-      setting: true,
-      tags: {
-        orderBy: [{ tag: { sortOrder: 'asc' } }, { tagId: 'asc' }],
-        select: { tag: { select: { kind: true, slug: true, name: true } } },
-      },
-      images: {
-        orderBy: { sortOrder: 'asc' },
-        take: 1,
-        select: { imageUrl: true, altText: true, attributionText: true },
-      },
-    },
+    select: placeCardSelect,
   })
 
   return {
@@ -148,5 +154,54 @@ export async function getPlaces(prisma, { q, filters, page, pageSize }) {
     page,
     pageSize,
     hasNextPage: rows.length > pageSize,
+  }
+}
+
+export function parsePlaceId(value) {
+  // Prisma Int의 양의 정수 범위만 허용한다. 숫자 변환 전에 정수 표기를 확인한다.
+  if (typeof value !== 'string' || !/^\d+$/.test(value)) return null
+  const id = Number(value)
+  return id >= 1 && id <= 2_147_483_647 ? id : null
+}
+
+export async function getPlaceDetail(prisma, id) {
+  const place = await prisma.place.findUnique({
+    where: { id, status: 'published' },
+    select: {
+      ...placeCardSelect,
+      summary: true,
+      overview: true,
+      address: true,
+      latitude: true,
+      longitude: true,
+      verifiedAt: true,
+      kakaoMapUrl: true,
+      naverMapUrl: true,
+      images: orderedImages,
+      sources: {
+        where: { provider: 'tourapi' },
+        select: { provider: true, sourceUrl: true },
+      },
+    },
+  })
+  if (!place) return null
+
+  const latitude = Number(place.latitude)
+  const longitude = Number(place.longitude)
+  const source = place.sources[0]
+  // 카카오 장소 ID 대신 이름과 위도·경도로 위치 링크를 만든다.
+  const kakaoLocationUrl = 'https://map.kakao.com/link/map/' +
+    encodeURIComponent(place.name) + ',' + latitude + ',' + longitude
+
+  return {
+    ...placeCard(place),
+    summary: place.summary,
+    overview: place.overview,
+    source: source ? { provider: source.provider, name: '한국관광공사 TourAPI', url: source.sourceUrl } : null,
+    address: place.address,
+    coordinates: { latitude, longitude },
+    verifiedAt: place.verifiedAt?.toISOString() ?? null,
+    images: place.images.map(placeImage),
+    mapLinks: { kakao: place.kakaoMapUrl ?? kakaoLocationUrl, naver: place.naverMapUrl },
   }
 }
