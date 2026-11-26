@@ -15,7 +15,27 @@ function paginationValue(value, fallback, max) {
   return number
 }
 
+function parseRecentPlaceIds(query) {
+  if (Object.keys(query).length !== 1 || typeof query.ids !== 'string') {
+    throw new InvalidPlacesQuery('ids는 다른 쿼리 없이 한 번만 사용해 주세요.')
+  }
+
+  const ids = query.ids.split(',')
+  // 중복을 제거하기 전에 검사해 요청에 담을 수 있는 ID 수를 최대 20개로 제한한다.
+  if (ids.length > 20) {
+    throw new InvalidPlacesQuery('장소 ID는 최대 20개까지 요청할 수 있습니다.')
+  }
+
+  const parsed = ids.map(parsePlaceId)
+  if (parsed.includes(null)) {
+    throw new InvalidPlacesQuery('유효한 장소 ID를 쉼표로 구분해 주세요.')
+  }
+  return [...new Set(parsed)]
+}
+
 export function parsePlacesQuery(query) {
+  if (Object.hasOwn(query, 'ids')) return { ids: parseRecentPlaceIds(query) }
+
   for (const [key, value] of Object.entries(query)) {
     if (!allowedKeys.has(key) || typeof value !== 'string' || value.includes('\u0000')) {
       // 중복 쿼리 키는 Express에서 배열이 되므로 문자열이 아닌 값과 함께 거절한다.
@@ -151,7 +171,20 @@ function placeCard({ id, name, region, category, setting, tags, images }) {
   }
 }
 
-export async function getPlaces(prisma, { q, filters, page, pageSize }) {
+async function getRecentPlaces(prisma, ids) {
+  const rows = await prisma.place.findMany({
+    where: { status: 'published', id: { in: ids } },
+    select: placeCardSelect,
+  })
+  // DB 조회 순서와 무관하게 브라우저가 보낸 순서대로 공개 카드만 반환한다.
+  const placesById = new Map(rows.map(place => [place.id, place]))
+  return { items: ids.map(id => placesById.get(id)).filter(Boolean).map(placeCard) }
+}
+
+export async function getPlaces(prisma, query) {
+  if (Object.hasOwn(query, 'ids')) return getRecentPlaces(prisma, query.ids)
+
+  const { q, filters, page, pageSize } = query
   await validateFilterSlugs(prisma, filters)
   const rows = await prisma.place.findMany({
     where: placeWhere(q, filters),
