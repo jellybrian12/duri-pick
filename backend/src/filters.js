@@ -1,4 +1,4 @@
-const settings = [
+export const placeSettings = [
   { slug: 'indoor', name: '실내' },
   { slug: 'outdoor', name: '실외' },
   { slug: 'mixed', name: '실내·실외' },
@@ -22,5 +22,5 @@ export async function getFilters(prisma) {
     if (kind === 'situation') situations.push({ slug, name })
   }
 
-  return { regions, categories, moods, situations, settings }
+  return { regions, categories, moods, situations, settings: placeSettings }
 }
