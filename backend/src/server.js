@@ -1,5 +1,6 @@
 import express from 'express'
 import { getFilters } from './filters.js'
+import { getNearbyPlaces, NearbyProviderError, parseNearbyCategory } from './nearby.js'
 import { getPlaceDetail, getPlaces, InvalidPlacesQuery, parsePlaceId, parsePlacesQuery } from './places.js'
 
 const app = express()
@@ -68,9 +69,7 @@ app.get('/api/v1/places/:id', async (request, response) => {
   try {
     const detail = await getPlaceDetail(await getPrisma(), id)
     if (!detail) {
-      response.status(404).json({
-        error: { code: 'PLACE_NOT_FOUND', message: '장소를 이용할 수 없습니다.' },
-      })
+      placeNotFound(response)
       return
     }
 
@@ -82,9 +81,48 @@ app.get('/api/v1/places/:id', async (request, response) => {
   }
 })
 
+function placeNotFound(response) {
+  response.status(404).json({
+    error: { code: 'PLACE_NOT_FOUND', message: '장소를 이용할 수 없습니다.' },
+  })
+}
+
+app.get('/api/v1/places/:id/nearby', async (request, response) => {
+  const id = parsePlaceId(request.params.id)
+  if (id === null) {
+    invalidPlaceId(response)
+    return
+  }
+
+  const category = parseNearbyCategory(request.query)
+  if (!category) {
+    response.status(400).json({
+      error: { code: 'INVALID_QUERY', message: '주변 장소 카테고리는 cafe 또는 restaurant를 사용해 주세요.' },
+    })
+    return
+  }
+
+  try {
+    const result = await getNearbyPlaces(await getPrisma(), id, category)
+    if (!result) {
+      placeNotFound(response)
+      return
+    }
+    response.json(result)
+  } catch (error) {
+    if (error instanceof NearbyProviderError) {
+      response.status(error.status).json({ error: { code: error.code, message: error.message } })
+      return
+    }
+    response.status(500).json({
+      error: { code: 'INTERNAL_ERROR', message: '주변 장소 검색을 준비하지 못했습니다.' },
+    })
+  }
+})
+
 app.use((error, request, response, next) => {
   // 잘못 인코딩된 ID는 Express가 라우트에 진입하기 전에 거절하므로 같은 JSON 오류로 응답한다.
-  if (error instanceof URIError && /^\/api\/v1\/places\/[^/]+\/?$/i.test(request.path)) {
+  if (error instanceof URIError && /^\/api\/v1\/places\/[^/]+(?:\/nearby)?\/?$/i.test(request.path)) {
     invalidPlaceId(response)
     return
   }
